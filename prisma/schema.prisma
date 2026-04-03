@@ -1,0 +1,378 @@
+// Freight Master Program — domain + Auth.js-compatible models (PostgreSQL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Auth.js (NextAuth) — keep for OAuth / future MFA flows ---
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// --- RBAC ---
+
+enum UserRole {
+  shipper
+  freight_forwarder
+  carrier
+  consignee
+  admin
+}
+
+// --- Domain ---
+
+enum DocumentType {
+  bill_of_lading
+  certificate_of_analysis
+  draft_survey_report
+  commercial_invoice
+  supporting_document
+}
+
+enum ShipmentWorkflowState {
+  draft
+  reviewed
+  approved
+  issued
+  transferred
+  surrendered
+  archived
+}
+
+enum ParserStatus {
+  pending
+  processing
+  completed
+  failed
+}
+
+enum ExtractionFieldStatus {
+  pending
+  approved
+  corrected
+  rejected
+}
+
+enum ShipmentPartyKind {
+  shipper
+  consignee
+  notify_party
+  carrier
+  freight_forwarder
+}
+
+enum ExtractionMethod {
+  manual
+  ai_parser
+  ocr
+  integration
+}
+
+enum FieldKey {
+  shipper_name
+  consignee_name
+  notify_party
+  vessel_name
+  port_of_loading
+  port_of_discharge
+  cargo_description
+  bill_of_lading_quantity_mt
+  draft_survey_quantity_mt
+  certificate_number
+  sampling_date
+  analysis_date
+  issue_date
+  ash_percent
+  moisture_percent
+  sulfur_percent
+  volatile_matter_percent
+  gcv_kcal_kg
+  nar_kcal_kg
+  hgi
+}
+
+enum ExceptionStatus {
+  open
+  resolved
+  waived
+}
+
+enum ExceptionSeverity {
+  info
+  warning
+  error
+}
+
+enum ControlAction {
+  initial
+  transfer
+  surrender
+}
+
+enum ApprovalDecision {
+  pending
+  approved
+  rejected
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users               User[]
+  shipmentParties     ShipmentParty[]
+  documentsAsSource   Document[]      @relation("DocumentSourceOrg")
+  controlledShipments Shipment[]      @relation("ShipmentControlHolder")
+  ownedShipments      Shipment[]      @relation("ShipmentOwner")
+  auditEvents         AuditEvent[]
+}
+
+model User {
+  id             String    @id @default(cuid())
+  name           String?
+  email          String?   @unique
+  emailVerified  DateTime? @map("email_verified")
+  image          String?
+  passwordHash   String?
+  role           UserRole  @default(freight_forwarder)
+  organizationId String    @map("organization_id")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  accounts Account[]
+  sessions Session[]
+
+  uploadedDocuments Document[]        @relation("DocumentUploader")
+  workflowEvents    WorkflowEvent[]
+  approvals         Approval[]
+  controlTransfers  ControlTransfer[]
+  reviewedFields    ExtractedField[]  @relation("FieldReviewer")
+}
+
+model Shipment {
+  id                           String                @id @default(cuid())
+  referenceCode                String                @unique
+  workflowState                ShipmentWorkflowState @default(draft)
+  ownerOrganizationId          String                @map("owner_organization_id")
+  currentControlOrganizationId String?               @map("current_control_organization_id")
+  createdAt                    DateTime              @default(now())
+  updatedAt                    DateTime              @updatedAt
+
+  owner                Organization  @relation("ShipmentOwner", fields: [ownerOrganizationId], references: [id])
+  currentControlHolder Organization? @relation("ShipmentControlHolder", fields: [currentControlOrganizationId], references: [id])
+
+  parties          ShipmentParty[]
+  documents        Document[]
+  extractedFields  ExtractedField[]  @relation("ShipmentExtractedFields")
+  validationRuns   ValidationRun[]
+  workflowEvents   WorkflowEvent[]
+  approvals        Approval[]
+  controlTransfers ControlTransfer[]
+  exceptions       ExceptionItem[]
+}
+
+model ShipmentParty {
+  id             String            @id @default(cuid())
+  shipmentId     String            @map("shipment_id")
+  organizationId String            @map("organization_id")
+  kind           ShipmentPartyKind
+  createdAt      DateTime          @default(now())
+
+  shipment     Shipment     @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([shipmentId, organizationId, kind])
+}
+
+model Document {
+  id                   String       @id @default(cuid())
+  shipmentId           String       @map("shipment_id")
+  type                 DocumentType
+  fileName             String       @map("file_name")
+  fileHash             String       @map("file_hash")
+  storageKey           String?      @map("storage_key")
+  uploadedByUserId     String       @map("uploaded_by_user_id")
+  sourceOrganizationId String       @map("source_organization_id")
+  parserStatus         ParserStatus @default(pending) @map("parser_status")
+  parserOutput         Json?        @map("parser_output")
+  uploadedAt           DateTime     @default(now()) @map("uploaded_at")
+
+  shipment        Shipment         @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  uploader        User             @relation("DocumentUploader", fields: [uploadedByUserId], references: [id])
+  sourceOrg       Organization     @relation("DocumentSourceOrg", fields: [sourceOrganizationId], references: [id])
+  extractedFields ExtractedField[]
+}
+
+model ExtractedField {
+  id               String                @id @default(cuid())
+  documentId       String                @map("document_id")
+  shipmentId       String                @map("shipment_id")
+  fieldKey         FieldKey              @map("field_key")
+  extractedValue   String?               @map("extracted_value") @db.Text
+  normalizedValue  String?               @map("normalized_value") @db.Text
+  confidence       Float?
+  extractionMethod ExtractionMethod      @default(ai_parser) @map("extraction_method")
+  status           ExtractionFieldStatus @default(pending)
+  reviewerUserId   String?               @map("reviewer_user_id")
+  reviewerComments String?               @map("reviewer_comments") @db.Text
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  shipment Shipment @relation("ShipmentExtractedFields", fields: [shipmentId], references: [id], onDelete: Cascade)
+  reviewer User?    @relation("FieldReviewer", fields: [reviewerUserId], references: [id])
+}
+
+model ValidationRule {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  name        String
+  description String?  @db.Text
+  config      Json     @default("{}")
+  active      Boolean  @default(true)
+  version     Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  results ValidationResult[]
+}
+
+model ValidationRun {
+  id                String   @id @default(cuid())
+  shipmentId        String   @map("shipment_id")
+  triggeredByUserId String?  @map("triggered_by_user_id")
+  createdAt         DateTime @default(now())
+
+  shipment Shipment           @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  results  ValidationResult[]
+}
+
+model ValidationResult {
+  id        String   @id @default(cuid())
+  runId     String   @map("run_id")
+  ruleId    String   @map("rule_id")
+  passed    Boolean
+  message   String?  @db.Text
+  details   Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  run  ValidationRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  rule ValidationRule @relation(fields: [ruleId], references: [id])
+}
+
+model WorkflowEvent {
+  id          String                 @id @default(cuid())
+  shipmentId  String                 @map("shipment_id")
+  fromState   ShipmentWorkflowState? @map("from_state")
+  toState     ShipmentWorkflowState  @map("to_state")
+  actorUserId String?                @map("actor_user_id")
+  metadata    Json                   @default("{}")
+  createdAt   DateTime               @default(now())
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  actor    User?    @relation(fields: [actorUserId], references: [id])
+}
+
+model Approval {
+  id          String           @id @default(cuid())
+  shipmentId  String           @map("shipment_id")
+  subjectType String           @map("subject_type")
+  subjectId   String           @map("subject_id")
+  decision    ApprovalDecision @default(pending)
+  comments    String?          @db.Text
+  decidedById String?          @map("decided_by_id")
+  createdAt   DateTime         @default(now())
+  decidedAt   DateTime?        @map("decided_at")
+
+  shipment  Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  decidedBy User?    @relation(fields: [decidedById], references: [id])
+}
+
+model ControlTransfer {
+  id                 String        @id @default(cuid())
+  shipmentId         String        @map("shipment_id")
+  fromOrganizationId String?       @map("from_organization_id")
+  toOrganizationId   String?       @map("to_organization_id")
+  action             ControlAction
+  performedByUserId  String        @map("performed_by_user_id")
+  createdAt          DateTime      @default(now())
+
+  shipment    Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  performedBy User     @relation(fields: [performedByUserId], references: [id])
+}
+
+model ExceptionItem {
+  id                 String            @id @default(cuid())
+  shipmentId         String            @map("shipment_id")
+  validationResultId String?           @map("validation_result_id")
+  title              String
+  description        String?           @db.Text
+  severity           ExceptionSeverity @default(warning)
+  status             ExceptionStatus   @default(open)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+}
+
+model AuditEvent {
+  id             String   @id @default(cuid())
+  timestamp      DateTime @default(now())
+  userId         String?  @map("user_id")
+  organizationId String?  @map("organization_id")
+  actorType      String   @map("actor_type")
+  entityType     String   @map("entity_type")
+  entityId       String   @map("entity_id")
+  action         String
+  beforeJson     Json?    @map("before_json")
+  afterJson      Json?    @map("after_json")
+  hashRef        String?  @map("hash_ref")
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+}
