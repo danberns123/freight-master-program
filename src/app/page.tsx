@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function Home() {
   return (
     <div className="flex flex-1 flex-col items-center justify-center bg-zinc-50 px-6 py-24 dark:bg-zinc-950">
@@ -8,15 +10,18 @@ export default function Home() {
         <h1 className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
           Freight Master Program
         </h1>
-        <p className="mt-4 rounded-lg border border-amber-200/80 bg-amber-50 px-4 py-3 text-left text-sm leading-relaxed text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
-          <strong className="font-medium">This deployment is the Next.js API shell</strong> (backend). The dashboard UI
-          from Lovable lives in a separate Lovable preview or publish URL — not here. If you expected a full UI on this
-          page, open your Lovable project preview, and set{" "}
-          <code className="rounded bg-amber-200/80 px-1 dark:bg-amber-900/80">VITE_API_BASE_URL</code> /{" "}
-          <code className="rounded bg-amber-200/80 px-1 dark:bg-amber-900/80">VITE_API_URL</code> to{" "}
-          <strong className="font-medium">this site&apos;s origin</strong> (copy from the browser address bar:{" "}
-          <code className="rounded bg-amber-200/80 px-1 dark:bg-amber-900/80">https://…</code>
-          ), with no trailing slash.
+        <p className="mt-6">
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+          >
+            Open dashboard
+          </Link>
+        </p>
+        <p className="mt-4 rounded-lg border border-zinc-200 bg-zinc-100/80 px-4 py-3 text-left text-sm leading-relaxed text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-300">
+          The dashboard runs in this Next.js app (same repo as Cursor). Optional: keep a separate Lovable UI for
+          experiments — point it at this site&apos;s origin for API calls — or develop UI only here to avoid
+          sync issues.
         </p>
         <p className="mt-4 text-lg leading-relaxed text-zinc-600 dark:text-zinc-400">
           Document upload, AI-assisted extraction, cross-document validation, workflow, RBAC, and audit
